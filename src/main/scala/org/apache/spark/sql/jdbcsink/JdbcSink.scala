@@ -73,7 +73,7 @@ class JdbcSink(sqlContext: SQLContext,
               saveRows(df, isCaseSensitive, parameters, batchId)
             } else {
               // Otherwise, do not truncate the table, instead drop and recreate it
-              dropTable(conn, options.table)
+              dropTable(conn, options.parameters(JDBCOptions.JDBC_TABLE_NAME))
               createTable(conn, df.schema, df.sparkSession, options)
               saveRows(df, isCaseSensitive, parameters, batchId)
             }
@@ -116,7 +116,7 @@ class JdbcSink(sqlContext: SQLContext,
                             options: JDBCOptions,
                             batchId: Long): Unit = {
     val url = options.url
-    val table = options.table
+    val table = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
     val dialect = JdbcDialects.get(url)
     val getConnection: () => Connection = createConnectionFactory(options)
     val batchSize = options.batchSize
@@ -172,7 +172,7 @@ class JdbcSink(sqlContext: SQLContext,
                                           isCaseSensitive: Boolean,
                                           parameters: Map[String, String],
                                           batchId: Long): Unit = {
-    val targetTable = options.table
+    val targetTable = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
     val dialect = JdbcDialects.get(options.url)
     val getConnection: () => Connection = createConnectionFactory(options)
     val batchSize = options.batchSize

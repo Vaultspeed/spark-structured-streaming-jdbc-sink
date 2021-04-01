@@ -82,7 +82,7 @@ object JdbcUtils extends Logging {
     // the database name. Query used to find table exists can be overridden by the dialects.
     Try {
       val statement =
-        conn.prepareStatement(dialect.getTableExistsQuery(options.table))
+        conn.prepareStatement(dialect.getTableExistsQuery(options.parameters(JDBCOptions.JDBC_TABLE_NAME)))
       try {
         statement.executeQuery()
       } finally {
@@ -109,7 +109,7 @@ object JdbcUtils extends Logging {
   def truncateTable(conn: Connection, options: JDBCOptions): Unit = {
     val statement = conn.createStatement
     try {
-      statement.executeUpdate(getTruncateStatement(options.table))
+      statement.executeUpdate(getTruncateStatement(options.parameters(JDBCOptions.JDBC_TABLE_NAME)))
     } finally {
       statement.close()
     }
@@ -127,7 +127,7 @@ object JdbcUtils extends Logging {
     Try {
       val statement = conn.createStatement()
       try {
-        val result = statement.executeQuery(s"SELECT count(*) FROM ${options.table}")
+        val result = statement.executeQuery(s"SELECT count(*) FROM ${options.parameters(JDBCOptions.JDBC_TABLE_NAME)}")
         if (result.next()) {
           isEmpty = result.getInt(1) == 0
         }
@@ -314,7 +314,7 @@ object JdbcUtils extends Logging {
 
     try {
       val statement =
-        conn.prepareStatement(dialect.getSchemaQuery(options.table))
+        conn.prepareStatement(dialect.getSchemaQuery(options.parameters(JDBCOptions.JDBC_TABLE_NAME)))
       try {
         Some(getSchema(statement.executeQuery(), dialect))
       } catch {
@@ -386,7 +386,7 @@ object JdbcUtils extends Logging {
     val encoder = RowEncoder(schema).resolveAndBind()
     val internalRows =
       resultSetToSparkInternalRows(resultSet, schema, inputMetrics)
-    internalRows.map(encoder.fromRow)
+    internalRows.map(encoder.createDeserializer.apply)
   }
 
   private[spark] def resultSetToSparkInternalRows(
@@ -1179,7 +1179,7 @@ object JdbcUtils extends Logging {
                 isCaseSensitive: Boolean,
                 options: JDBCOptions): Unit = {
     val url = options.url
-    val table = options.table
+    val table = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
     val dialect = JdbcDialects.get(url)
     val rddSchema = df.schema
     val getConnection: () => Connection = createConnectionFactory(options)
@@ -1222,7 +1222,7 @@ object JdbcUtils extends Logging {
                                  sparkSession,
                                  options.url,
                                  options.createTableColumnTypes)
-    val table = options.table
+    val table = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
     val createTableOptions = options.createTableOptions
     // Create the table if the table does not exist.
     // To allow certain options to append when create a new table, which can be

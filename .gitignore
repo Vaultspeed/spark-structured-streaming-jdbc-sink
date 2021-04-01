@@ -5,3 +5,6 @@
 checkpointLocation
 target
 *.iml
+*.metals
+*.bloop
+*.vscode
