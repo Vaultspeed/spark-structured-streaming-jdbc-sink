@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.SpecificInternalRow
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils, GenericArrayData}
+import org.apache.spark.sql.catalyst.util.DateTimeUtils.{toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.execution.datasources.jdbc.{DriverRegistry, DriverWrapper, JDBCOptions}
 import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcDialects, JdbcType}
 import org.apache.spark.sql.types._
@@ -628,20 +629,16 @@ object JdbcUtils extends Logging {
           stmt.setBytes(pos + 1, row.getBinary(pos))
 
       case TimestampType =>
-        (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
-          stmt.setTimestamp(
-            pos + 1,
-            row.get(pos, dataType).asInstanceOf[java.sql.Timestamp])
+      (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
+      stmt.setTimestamp(pos + 1, toJavaTimestamp(row.get(pos, dataType).asInstanceOf[Long]))
 
       case DateType =>
-        (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
-          stmt.setDate(pos + 1,
-                       row.get(pos, dataType).asInstanceOf[java.sql.Date])
+      (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
+      stmt.setDate(pos + 1, toJavaDate(row.get(pos, dataType).asInstanceOf[Int]))
 
       case t: DecimalType =>
         (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
-          stmt.setBigDecimal(pos + 1,
-                             row.getDecimal(pos, 20, 4).toJavaBigDecimal)
+          stmt.setBigDecimal(pos + 1, row.getDecimal(pos, 20, 4).toJavaBigDecimal)
 
       case ArrayType(et, _) =>
         // remove type length parameters from end of type name
@@ -1186,6 +1183,8 @@ object JdbcUtils extends Logging {
     val batchSize = options.batchSize
     val isolationLevel = options.isolationLevel
 
+    // TODO: use supplied insert statement
+    
     val insertStmt = getInsertStatement(table,
                                         rddSchema,
                                         tableSchema,
