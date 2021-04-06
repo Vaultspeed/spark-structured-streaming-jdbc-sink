@@ -26,12 +26,13 @@ class DefaultSource extends DataSourceRegister with StreamSinkProvider {
 
   override def shortName(): String = "jdbcsink"
 
-  def createSink(sqlContext: SQLContext,
-                 parameters: Map[String, String],
-                 partitionColumns: Seq[String],
-                 outputMode: OutputMode): Sink = {
+  def createSink(
+      sqlContext: SQLContext,
+      parameters: Map[String, String],
+      partitionColumns: Seq[String],
+      outputMode: OutputMode
+  ): Sink = {
     new JdbcSink(sqlContext, parameters, partitionColumns, outputMode)
-
   }
 
 }
