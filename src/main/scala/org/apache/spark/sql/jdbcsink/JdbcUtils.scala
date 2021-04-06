@@ -17,31 +17,16 @@
 
 package org.apache.spark.sql.jdbcsink
 
-import java.sql.{
-  Connection,
-  Driver,
-  DriverManager,
-  JDBCType,
-  PreparedStatement,
-  ResultSet,
-  ResultSetMetaData,
-  SQLException
-}
-import java.util.Locale
+import java.sql.{Connection, DriverManager, PreparedStatement, SQLException}
 
-import org.apache.spark.TaskContext
-import org.apache.spark.executor.InputMetrics
+import scala.util.Try
+import scala.util.control.NonFatal
+import scala.collection.JavaConverters._
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.analysis.Resolver
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
-import org.apache.spark.sql.catalyst.expressions.SpecificInternalRow
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
-import org.apache.spark.sql.catalyst.util.{
-  CaseInsensitiveMap,
-  DateTimeUtils,
-  GenericArrayData
-}
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{
   toJavaDate,
   toJavaTimestamp,
@@ -56,13 +41,7 @@ import org.apache.spark.sql.execution.datasources.jdbc.{
 import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcDialects, JdbcType}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.SchemaUtils
-import org.apache.spark.sql.{AnalysisException, DataFrame, Row, SparkSession}
-import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.util.NextIterator
-
-import scala.util.Try
-import scala.util.control.NonFatal
-import scala.collection.JavaConverters._
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 
 /** Util functions for JDBC tables.
   */
@@ -76,7 +55,7 @@ object JdbcUtils extends Logging {
     val driverClass: String = options.driverClass
     () => {
       DriverRegistry.register(driverClass)
-      val driver: Driver = DriverManager.getDrivers.asScala
+      val driver = DriverManager.getDrivers.asScala
         .collectFirst {
           case d: DriverWrapper
               if d.wrapped.getClass.getCanonicalName == driverClass =>
