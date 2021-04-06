@@ -21,7 +21,6 @@ import java.sql.Connection
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
-import org.apache.spark.sql.jdbcsink.JdbcUtils._
 import org.apache.spark.sql.execution.datasources.jdbc._
 import org.apache.spark.sql.execution.streaming.Sink
 import org.apache.spark.sql.jdbc.JdbcDialects
@@ -34,47 +33,48 @@ class JdbcSink(
     outputMode: OutputMode
 ) extends Sink
     with Logging {
-  val options = new JDBCOptions(parameters)
+  val options = new JdbcOptionsInWrite(parameters)
 
   def addBatch(batchId: Long, df: DataFrame): Unit = {
 
     // NOTE: fail fast with not supported output mode
     if (
-      outputMode != OutputMode.Complete() && outputMode != OutputMode.Append()
+      outputMode != OutputMode.Complete() &&
+      outputMode != OutputMode.Append()
     ) {
-      throw new IllegalArgumentException(s"$outputMode not supported")
+      throw new IllegalArgumentException(
+        s"$outputMode not supported by JdbcSink."
+      )
     }
 
     val conn = JdbcUtils.createConnectionFactory(options)()
     try {
+
+      val dialect = JdbcDialects.get(options.url)
+      val tableName = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
       val isCaseSensitive = sqlContext.conf.caseSensitiveAnalysis
-      val tableExists = JdbcUtils.tableExists(conn, options)
+      var tableExists = JdbcUtils.tableExists(conn, options)
 
-      if (!tableExists) {
-        createTable(conn, df.schema, df.sparkSession, options)
-      }
-
-      if (outputMode == OutputMode.Complete()) {
+      if (outputMode == OutputMode.Complete() && tableExists) {
         if (
-          options.isTruncate && JdbcDialects
-            .get(options.url)
+          options.isTruncate && dialect
             .isCascadingTruncateTable()
             .contains(
               false
             )
         ) {
-          // In this case, we should truncate table and then load.
-          truncateTable(conn, options)
+          JdbcUtils.truncateTable(conn, options)
         } else {
-          // Otherwise, do not truncate the table, instead drop and recreate it
-          if (tableExists) {
-            dropTable(conn, options.parameters(JDBCOptions.JDBC_TABLE_NAME))
-            createTable(conn, df.schema, df.sparkSession, options)
-          }
+          JdbcUtils.dropTable(conn, tableName, options)
+          tableExists = false
         }
       }
 
-      saveRowsToTargetTable(df, isCaseSensitive, options, batchId)
+      if (!tableExists) {
+        JdbcUtils.createTable(conn, df, options)
+      }
+
+      saveDataSet(df, tableName, isCaseSensitive, options, batchId)
 
     } finally {
       conn.close()
@@ -83,17 +83,17 @@ class JdbcSink(
 
   /** Saves the RDD to the database in a single transaction.
     */
-  def saveRowsToTargetTable(
+  def saveDataSet(
       df: DataFrame,
+      tableName: String,
       isCaseSensitive: Boolean,
       options: JDBCOptions,
       batchId: Long
   ): Unit = {
-    val url = options.url
-    val table = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
+
     val insertStatement = options.parameters.get("insertStatement")
-    val dialect = JdbcDialects.get(url)
-    val getConnection: () => Connection = createConnectionFactory(options)
+    val dialect = JdbcDialects.get(options.url)
+    val getConnection = JdbcUtils.createConnectionFactory(options)
     val batchSize = options.batchSize
     val isolationLevel = options.isolationLevel
 
@@ -111,21 +111,28 @@ class JdbcSink(
     val insertStmt = if (insertStatement.isDefined) {
       insertStatement.get
     } else {
-      getInsertStatement(table, schema, None, isCaseSensitive, dialect)
+      JdbcUtils.getInsertStatement(
+        tableName,
+        schema,
+        None,
+        isCaseSensitive,
+        dialect
+      )
     }
 
-    repartitionedDF.queryExecution.toRdd.foreachPartition(iterator => {
-      JdbcUtils.saveInternalPartition(
+    repartitionedDF.queryExecution.toRdd.foreachPartition(iterator =>
+      JdbcUtilsInternal.savePartition(
         getConnection,
-        table,
+        tableName,
         iterator,
         schema,
         insertStmt,
         batchSize,
         dialect,
-        isolationLevel
+        isolationLevel,
+        options
       )
-    })
+    )
   }
 
 }
