@@ -1,4 +1,4 @@
-val spark_version = "3.0.1"
+val spark_version = "3.1.1"
 
 name := "spark-structured-streaming-jdbc-sink"
 version := spark_version

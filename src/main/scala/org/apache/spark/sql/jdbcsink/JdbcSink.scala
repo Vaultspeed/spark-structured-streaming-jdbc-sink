@@ -71,7 +71,7 @@ class JdbcSink(
       }
 
       if (!tableExists) {
-        JdbcUtils.createTable(conn, df, options)
+        JdbcUtils.createTable(conn, tableName, df.schema, isCaseSensitive, options)
       }
 
       saveDataSet(df, tableName, isCaseSensitive, options, batchId)

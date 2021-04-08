@@ -26,9 +26,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{
   toJavaDate,
-  toJavaTimestamp,
-  SQLDate,
-  SQLTimestamp
+  toJavaTimestamp
 }
 import org.apache.spark.sql.execution.datasources.jdbc.{JDBCOptions, JdbcUtils}
 import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcDialects, JdbcType}
@@ -102,14 +100,14 @@ object JdbcUtilsInternal extends Logging {
         (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
           stmt.setTimestamp(
             pos + 1,
-            toJavaTimestamp(row.get(pos, dataType).asInstanceOf[SQLTimestamp])
+            toJavaTimestamp(row.get(pos, dataType).asInstanceOf[Long])
           )
 
       case DateType =>
         (stmt: PreparedStatement, row: InternalRow, pos: Int) =>
           stmt.setDate(
             pos + 1,
-            toJavaDate(row.get(pos, dataType).asInstanceOf[SQLDate])
+            toJavaDate(row.get(pos, dataType).asInstanceOf[Int])
           )
 
       case t: DecimalType =>
