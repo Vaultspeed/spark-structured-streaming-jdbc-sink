@@ -17,8 +17,6 @@
 
 package org.apache.spark.sql.jdbcsink
 
-import java.sql.Connection
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.datasources.jdbc._
@@ -33,7 +31,6 @@ class JdbcSink(
     outputMode: OutputMode
 ) extends Sink
     with Logging {
-  val options = new JdbcOptionsInWrite(parameters)
 
   def addBatch(batchId: Long, df: DataFrame): Unit = {
 
@@ -47,13 +44,30 @@ class JdbcSink(
       )
     }
 
-    val conn = JdbcUtils.createConnectionFactory(options)()
+    val options = new JdbcOptionsInWrite(parameters)
+    val ds = ConnectionPool.get(parameters)
+    val conn = ds.getConnection
+
     try {
 
       val dialect = JdbcDialects.get(options.url)
-      val tableName = options.parameters(JDBCOptions.JDBC_TABLE_NAME)
+      val tableName = options.table
       val isCaseSensitive = sqlContext.conf.caseSensitiveAnalysis
       var tableExists = JdbcUtils.tableExists(conn, options)
+      val batchSize = options.batchSize
+      val schema = df.schema
+
+      val stmt = options.parameters.get("insertStatement")
+      val insertStmt = if (stmt.isDefined) { stmt.get }
+      else {
+        JdbcUtils.getInsertStatement(
+          tableName,
+          schema,
+          None,
+          isCaseSensitive,
+          dialect
+        )
+      }
 
       if (outputMode == OutputMode.Complete() && tableExists) {
         if (
@@ -71,68 +85,38 @@ class JdbcSink(
       }
 
       if (!tableExists) {
-        JdbcUtils.createTable(conn, tableName, df.schema, isCaseSensitive, options)
+        JdbcUtils.createTable(
+          conn,
+          tableName,
+          schema,
+          isCaseSensitive,
+          options
+        )
       }
 
-      saveDataSet(df, tableName, isCaseSensitive, options, batchId)
+      val repartitionedDF = options.numPartitions match {
+        case Some(n) if n <= 0 =>
+          throw new IllegalArgumentException(
+            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` in table writing " +
+              "via JDBC. The minimum value is 1."
+          )
+        case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
+        case _                                      => df
+      }
 
+      repartitionedDF.queryExecution.toRdd.foreachPartition(iterator =>
+        JdbcUtilsInternal.savePartition(
+          iterator,
+          schema,
+          insertStmt,
+          batchSize,
+          dialect,
+          options
+        )
+      )
     } finally {
       conn.close()
     }
-  }
-
-  /** Saves the RDD to the database in a single transaction.
-    */
-  def saveDataSet(
-      df: DataFrame,
-      tableName: String,
-      isCaseSensitive: Boolean,
-      options: JDBCOptions,
-      batchId: Long
-  ): Unit = {
-
-    val insertStatement = options.parameters.get("insertStatement")
-    val dialect = JdbcDialects.get(options.url)
-    val getConnection = JdbcUtils.createConnectionFactory(options)
-    val batchSize = options.batchSize
-    val isolationLevel = options.isolationLevel
-
-    val repartitionedDF = options.numPartitions match {
-      case Some(n) if n <= 0 =>
-        throw new IllegalArgumentException(
-          s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` in table writing " +
-            "via JDBC. The minimum value is 1."
-        )
-      case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
-      case _                                      => df
-    }
-
-    val schema = df.schema
-    val insertStmt = if (insertStatement.isDefined) {
-      insertStatement.get
-    } else {
-      JdbcUtils.getInsertStatement(
-        tableName,
-        schema,
-        None,
-        isCaseSensitive,
-        dialect
-      )
-    }
-
-    repartitionedDF.queryExecution.toRdd.foreachPartition(iterator =>
-      JdbcUtilsInternal.savePartition(
-        getConnection,
-        tableName,
-        iterator,
-        schema,
-        insertStmt,
-        batchSize,
-        dialect,
-        isolationLevel,
-        options
-      )
-    )
   }
 
 }

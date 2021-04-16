@@ -6,3 +6,5 @@ scalaVersion := "2.12.10"
 
 libraryDependencies += "org.apache.spark" %% "spark-sql" % spark_version
 libraryDependencies += "org.apache.spark" %% "spark-sql-kafka-0-10" % spark_version
+// https://mvnrepository.com/artifact/com.zaxxer/HikariCP
+libraryDependencies += "com.zaxxer" % "HikariCP" % "4.0.3"

@@ -19,8 +19,6 @@ package org.apache.spark.sql.jdbcsink
 
 import java.sql.{Connection, PreparedStatement, SQLException}
 
-import scala.util.control.NonFatal
-
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
@@ -28,8 +26,8 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils.{
   toJavaDate,
   toJavaTimestamp
 }
-import org.apache.spark.sql.execution.datasources.jdbc.{JDBCOptions, JdbcUtils}
-import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcDialects, JdbcType}
+import org.apache.spark.sql.execution.datasources.jdbc.{JdbcUtils, JDBCOptions}
+import org.apache.spark.sql.jdbc.{JdbcDialect, JdbcType}
 import org.apache.spark.sql.types._
 
 /** Util functions for JDBC tables.
@@ -148,65 +146,30 @@ object JdbcUtilsInternal extends Logging {
     * are used.
     */
   def savePartition(
-      getConnection: () => Connection,
-      table: String,
       iterator: Iterator[InternalRow],
       rddSchema: StructType,
       insertStmt: String,
       batchSize: Int,
       dialect: JdbcDialect,
-      isolationLevel: Int,
       options: JDBCOptions
   ): Unit = {
 
     val outMetrics = TaskContext.get().taskMetrics().outputMetrics
-    val conn = getConnection()
-    var committed = false
+    val pool = ConnectionPool.get(options.parameters)
 
-    var finalIsolationLevel = Connection.TRANSACTION_NONE
-    if (isolationLevel != Connection.TRANSACTION_NONE) {
-      try {
-        val metadata = conn.getMetaData
-        if (metadata.supportsTransactions()) {
-          // Update to at least use the default isolation, if any transaction level
-          // has been chosen and transactions are supported
-          val defaultIsolation = metadata.getDefaultTransactionIsolation
-          finalIsolationLevel = defaultIsolation
-          if (metadata.supportsTransactionIsolationLevel(isolationLevel)) {
-            // Finally update to actually requested level if possible
-            finalIsolationLevel = isolationLevel
-          } else {
-            logWarning(
-              s"Requested isolation level $isolationLevel is not supported; " +
-                s"falling back to default isolation level $defaultIsolation"
-            )
-          }
-        } else {
-          logWarning(
-            s"Requested isolation level $isolationLevel, but transactions are unsupported"
-          )
-        }
-      } catch {
-        case NonFatal(e) =>
-          logWarning("Exception while detecting transaction support", e)
-      }
-    }
-    val supportsTransactions =
-      finalIsolationLevel != Connection.TRANSACTION_NONE
+    var committed = false
+    var autoCommit = false
     var totalRowCount = 0L
 
+    val conn = pool.getConnection()
     try {
-      if (supportsTransactions) {
-        conn.setAutoCommit(false) // Everything in the same db transaction.
-        conn.setTransactionIsolation(finalIsolationLevel)
-      }
-      val stmt = conn.prepareStatement(insertStmt)
+      autoCommit = conn.getAutoCommit()
       val setters =
         rddSchema.fields.map(f => makeInternalSetter(conn, dialect, f.dataType))
       val nullTypes =
         rddSchema.fields.map(f => getJdbcType(f.dataType, dialect).jdbcNullType)
       val numFields = rddSchema.fields.length
-
+      val stmt = conn.prepareStatement(insertStmt)
       try {
         var rowCount = 0
         while (iterator.hasNext) {
@@ -234,7 +197,7 @@ object JdbcUtilsInternal extends Logging {
       } finally {
         stmt.close()
       }
-      if (supportsTransactions) {
+      if (!autoCommit) {
         conn.commit()
       }
       committed = true
@@ -259,27 +222,24 @@ object JdbcUtilsInternal extends Logging {
         }
         throw e
     } finally {
-      if (!committed) {
-        // The stage must fail.  We got here through an exception path, so
-        // let the exception through unless rollback() or close() want to
-        // tell the user about another problem.
-        if (supportsTransactions) {
-          conn.rollback()
-        } else {
-          outMetrics.setRecordsWritten(totalRowCount)
-        }
-        conn.close()
-      } else {
-        outMetrics.setRecordsWritten(totalRowCount)
-
-        // The stage must succeed.  We cannot propagate any exception close() might throw.
+      if (!committed && !autoCommit) {
         try {
-          conn.close()
+          conn.rollback()
         } catch {
           case e: Exception =>
-            logWarning("Transaction succeeded, but closing failed", e)
+            logWarning("Transaction rollback failed.", e)
+            committed = true
         }
       }
+      if (committed || autoCommit) {
+        try {
+          outMetrics.setRecordsWritten(totalRowCount)
+        } catch {
+          case e: Exception =>
+            logWarning("Metrics write failed.", e)
+        }
+      }
+      conn.close()
     }
   }
 
